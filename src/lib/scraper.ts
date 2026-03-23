@@ -189,7 +189,18 @@ async function fetchKeyword(
  * Scrape all ads for a category (all keywords combined, deduplicated).
  */
 export async function scrapeCategory(category: Category): Promise<Ad[]> {
-  const cacheKey = category.id;
+  // Cache key includes settings hash so changes auto-invalidate cache
+  const settingsHash = JSON.stringify({
+    kw: category.keywords,
+    loc: category.location,
+    r: category.radius,
+    sec: category.kleinanzeigenSection,
+    ex: category.excludeSections,
+    et: category.excludeTerms,
+    st: category.searchType,
+    ot: category.offerType,
+  });
+  const cacheKey = `${category.id}:${settingsHash}`;
 
   // Return cached if fresh
   if (cache[cacheKey] && Date.now() - cache[cacheKey].timestamp < CACHE_TTL) {
