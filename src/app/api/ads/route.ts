@@ -19,7 +19,7 @@ export async function GET(req: NextRequest) {
 
     if (categoryId) {
       // Single category
-      const cat = getCategoryById(categoryId);
+      const cat = await getCategoryById(categoryId);
       if (!cat || !cat.enabled) {
         return NextResponse.json({ error: 'Category not found' }, { status: 404 });
       }
@@ -43,7 +43,7 @@ export async function GET(req: NextRequest) {
     }
 
     // All enabled categories
-    const enabledCats = getEnabledCategories();
+    const enabledCats = await getEnabledCategories();
     const allResults = await scrapeAllCategories(enabledCats);
 
     let flatAds = Object.values(allResults).flat();

@@ -33,7 +33,7 @@ export async function GET(req: NextRequest) {
   if (!checkAuth(req)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
-  return NextResponse.json({ categories: getCategories() });
+  return NextResponse.json({ categories: await getCategories() });
 }
 
 export async function POST(req: NextRequest) {
@@ -71,7 +71,7 @@ export async function POST(req: NextRequest) {
       offerType: offerType || '',
     };
 
-    addCategory(newCat);
+    await addCategory(newCat);
     return NextResponse.json({ success: true, category: newCat }, { status: 201 });
   } catch {
     return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
@@ -90,7 +90,7 @@ export async function PUT(req: NextRequest) {
 
   try {
     const updates = await req.json();
-    const success = updateCategory(id, updates);
+    const success = await updateCategory(id, updates);
 
     if (!success) {
       return NextResponse.json({ error: 'Category not found' }, { status: 404 });
@@ -114,7 +114,7 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: 'Category ID required' }, { status: 400 });
   }
 
-  const success = deleteCategory(id);
+  const success = await deleteCategory(id);
   if (!success) {
     return NextResponse.json({ error: 'Category not found' }, { status: 404 });
   }

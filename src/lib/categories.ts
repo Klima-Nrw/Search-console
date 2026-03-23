@@ -1,14 +1,12 @@
 /**
- * Category configuration with multiple search keywords per category.
- * The admin panel reads/writes this via the /api/admin/categories endpoint.
- * On Vercel, this is stored in-memory (resets on cold start) with a JSON file fallback.
+ * Category configuration with persistent storage via Vercel KV.
+ * Falls back to in-memory storage if KV is not configured.
  */
 
-/**
- * Kleinanzeigen section slugs for URL filtering.
- * Using these restricts search to a specific Kleinanzeigen category,
- * preventing irrelevant results (e.g. car listings when searching "Klimaanlage").
- */
+import { kv } from '@vercel/kv';
+
+const KV_KEY = 'kleinanzeigen:categories';
+
 // Each section has a URL slug and a category code for the search suffix
 export const KLEINANZEIGEN_SECTIONS: Record<string, { slug: string; code: string }> = {
   'alle':              { slug: '',                       code: '' },
@@ -32,17 +30,17 @@ export interface Category {
   id: string;
   name: string;
   keywords: string[];
-  location: string;         // Postal code
-  radius: number;           // km
+  location: string;
+  radius: number;
   enabled: boolean;
   excludeTerms: string[];
-  kleinanzeigenSection: string;  // Key from KLEINANZEIGEN_SECTIONS (e.g. 'dienstleistungen')
-  excludeSections: string[];     // Kleinanzeigen sections to exclude (e.g. ['auto-rad-boot'])
-  searchType: string;       // 'anbieter:privat', 'anbieter:gewerblich', or '' (all)
-  offerType: string;        // 'anzeige:angebote', 'anzeige:gesuche', or '' (all)
+  kleinanzeigenSection: string;
+  excludeSections: string[];
+  searchType: string;
+  offerType: string;
 }
 
-// Default categories - these get loaded on first run
+// Default categories
 export const defaultCategories: Category[] = [
   {
     id: 'klimaanlagen',
@@ -59,7 +57,7 @@ export const defaultCategories: Category[] = [
     enabled: true,
     excludeTerms: ['Praktikant', 'Verstärkung', 'Festanstellung'],
     kleinanzeigenSection: 'alle',
-    excludeSections: ['auto-rad-boot'],  // Exclude car listings
+    excludeSections: ['auto-rad-boot'],
     searchType: 'anbieter:privat',
     offerType: 'anzeige:gesuche',
   },
@@ -79,44 +77,94 @@ export const defaultCategories: Category[] = [
     enabled: true,
     excludeTerms: ['Praktikant', 'Verstärkung', 'Festanstellung'],
     kleinanzeigenSection: 'alle',
-    excludeSections: ['auto-rad-boot'],  // Exclude car listings
+    excludeSections: ['auto-rad-boot'],
     searchType: 'anbieter:privat',
     offerType: 'anzeige:gesuche',
   },
 ];
 
-// In-memory store (persists across requests within the same serverless instance)
-let categories: Category[] = [...defaultCategories];
-
-export function getCategories(): Category[] {
-  return categories;
+// Check if Vercel KV is configured
+function isKvAvailable(): boolean {
+  return !!(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN);
 }
 
-export function getEnabledCategories(): Category[] {
-  return categories.filter((c) => c.enabled);
+// In-memory fallback (used when KV is not configured)
+let memoryCategories: Category[] = [...defaultCategories];
+
+/**
+ * Get all categories from persistent storage (KV) or memory fallback.
+ */
+export async function getCategories(): Promise<Category[]> {
+  if (isKvAvailable()) {
+    try {
+      const stored = await kv.get<Category[]>(KV_KEY);
+      if (stored && stored.length > 0) return stored;
+      // First run: save defaults to KV
+      await kv.set(KV_KEY, defaultCategories);
+      return defaultCategories;
+    } catch {
+      // KV error - fall back to memory
+    }
+  }
+  return memoryCategories;
 }
 
-export function getCategoryById(id: string): Category | undefined {
-  return categories.find((c) => c.id === id);
+/**
+ * Get only enabled categories.
+ */
+export async function getEnabledCategories(): Promise<Category[]> {
+  const cats = await getCategories();
+  return cats.filter((c) => c.enabled);
 }
 
-export function setCategories(updated: Category[]): void {
-  categories = updated;
+/**
+ * Get a single category by ID.
+ */
+export async function getCategoryById(id: string): Promise<Category | undefined> {
+  const cats = await getCategories();
+  return cats.find((c) => c.id === id);
 }
 
-export function addCategory(cat: Category): void {
-  categories.push(cat);
+/**
+ * Replace all categories.
+ */
+export async function setCategories(updated: Category[]): Promise<void> {
+  if (isKvAvailable()) {
+    try {
+      await kv.set(KV_KEY, updated);
+    } catch { /* fall through to memory */ }
+  }
+  memoryCategories = updated;
 }
 
-export function updateCategory(id: string, updates: Partial<Category>): boolean {
-  const idx = categories.findIndex((c) => c.id === id);
+/**
+ * Add a new category.
+ */
+export async function addCategory(cat: Category): Promise<void> {
+  const cats = await getCategories();
+  cats.push(cat);
+  await setCategories(cats);
+}
+
+/**
+ * Update an existing category.
+ */
+export async function updateCategory(id: string, updates: Partial<Category>): Promise<boolean> {
+  const cats = await getCategories();
+  const idx = cats.findIndex((c) => c.id === id);
   if (idx === -1) return false;
-  categories[idx] = { ...categories[idx], ...updates };
+  cats[idx] = { ...cats[idx], ...updates };
+  await setCategories(cats);
   return true;
 }
 
-export function deleteCategory(id: string): boolean {
-  const before = categories.length;
-  categories = categories.filter((c) => c.id !== id);
-  return categories.length < before;
+/**
+ * Delete a category.
+ */
+export async function deleteCategory(id: string): Promise<boolean> {
+  const cats = await getCategories();
+  const filtered = cats.filter((c) => c.id !== id);
+  if (filtered.length === cats.length) return false;
+  await setCategories(filtered);
+  return true;
 }
