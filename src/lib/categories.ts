@@ -1,10 +1,40 @@
 /**
- * Category configuration with persistent storage via Vercel KV REST API.
- * Uses raw fetch() instead of @vercel/kv package to avoid silent failures.
- * Falls back to in-memory storage if KV is not configured.
+ * Category configuration with persistent storage via Upstash Redis REST API.
+ * Vercel KV was deprecated and migrated to Upstash Redis.
+ * Derives REST API URL/token from REDIS_URL env var.
+ * Falls back to in-memory storage if Redis is not configured.
  */
 
 const KV_KEY = 'kleinanzeigen:categories';
+
+/**
+ * Extract Upstash REST API credentials from available env vars.
+ * Priority: explicit REST vars > derive from REDIS_URL
+ */
+function getRedisCredentials(): { url: string; token: string } | null {
+  // Check explicit REST API vars first
+  if (process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN) {
+    return { url: process.env.KV_REST_API_URL, token: process.env.KV_REST_API_TOKEN };
+  }
+  if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
+    return { url: process.env.UPSTASH_REDIS_REST_URL, token: process.env.UPSTASH_REDIS_REST_TOKEN };
+  }
+  // Derive from REDIS_URL: redis://default:PASSWORD@HOSTNAME:PORT
+  // Upstash REST API = https://HOSTNAME, token = PASSWORD
+  if (process.env.REDIS_URL) {
+    try {
+      const parsed = new URL(process.env.REDIS_URL);
+      const hostname = parsed.hostname;
+      const password = parsed.password;
+      if (hostname && password) {
+        return { url: `https://${hostname}`, token: password };
+      }
+    } catch {
+      console.error('Failed to parse REDIS_URL');
+    }
+  }
+  return null;
+}
 
 // Each section has a URL slug and a category code for the search suffix
 export const KLEINANZEIGEN_SECTIONS: Record<string, { slug: string; code: string }> = {
@@ -81,24 +111,21 @@ export const defaultCategories: Category[] = [
   },
 ];
 
-// Raw KV REST API helpers
+// Upstash Redis REST API helpers
 async function kvGet(): Promise<Category[] | null> {
-  const url = process.env.KV_REST_API_URL;
-  const token = process.env.KV_REST_API_TOKEN;
-  if (!url || !token) return null;
+  const creds = getRedisCredentials();
+  if (!creds) return null;
 
-  const resp = await fetch(`${url}/get/${KV_KEY}`, {
-    headers: { Authorization: `Bearer ${token}` },
+  const resp = await fetch(`${creds.url}/get/${KV_KEY}`, {
+    headers: { Authorization: `Bearer ${creds.token}` },
     cache: 'no-store',
   });
   if (!resp.ok) {
-    console.error('KV GET failed:', resp.status, await resp.text());
+    console.error('Redis GET failed:', resp.status, await resp.text());
     return null;
   }
   const data = await resp.json();
-  // Vercel KV REST API returns { result: <value> }
   if (data.result === null || data.result === undefined) return null;
-  // The result may be a JSON string or already parsed
   if (typeof data.result === 'string') {
     try {
       return JSON.parse(data.result);
@@ -110,21 +137,20 @@ async function kvGet(): Promise<Category[] | null> {
 }
 
 async function kvSet(categories: Category[]): Promise<boolean> {
-  const url = process.env.KV_REST_API_URL;
-  const token = process.env.KV_REST_API_TOKEN;
-  if (!url || !token) return false;
+  const creds = getRedisCredentials();
+  if (!creds) return false;
 
-  const resp = await fetch(`${url}`, {
+  const resp = await fetch(`${creds.url}`, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${token}`,
+      Authorization: `Bearer ${creds.token}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(['SET', KV_KEY, JSON.stringify(categories)]),
     cache: 'no-store',
   });
   if (!resp.ok) {
-    console.error('KV SET failed:', resp.status, await resp.text());
+    console.error('Redis SET failed:', resp.status, await resp.text());
     return false;
   }
   return true;
@@ -143,7 +169,7 @@ export async function getCategories(): Promise<Category[]> {
       memoryCategories = stored;
       return stored;
     }
-    if (stored === null && process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN) {
+    if (stored === null && getRedisCredentials()) {
       // KV is available but key doesn't exist yet — save defaults
       await kvSet(defaultCategories);
       memoryCategories = [...defaultCategories];
