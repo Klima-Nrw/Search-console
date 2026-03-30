@@ -13,7 +13,8 @@ import { scrapeCategory, scrapeAllCategories } from '@/lib/scraper';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
 
-const CACHE_URL = 'https://raw.githubusercontent.com/anirudhatalmale6-alt/kleinanzeigen-proxy/master/ads.json';
+// Use GitHub API for reliable access (raw.githubusercontent.com has CDN caching delays)
+const CACHE_URL = 'https://api.github.com/repos/anirudhatalmale6-alt/kleinanzeigen-proxy/contents/ads.json';
 const CACHE_MAX_AGE = 30 * 60 * 1000; // 30 minutes - consider cache stale after this
 
 interface CachedAd {
@@ -42,7 +43,10 @@ interface CachedData {
 async function fetchCachedAds(): Promise<CachedData | null> {
   try {
     const res = await fetch(CACHE_URL, {
-      headers: { 'Cache-Control': 'no-cache' },
+      headers: {
+        'Accept': 'application/vnd.github.raw+json',
+        'Cache-Control': 'no-cache',
+      },
       next: { revalidate: 0 },
     });
     if (!res.ok) return null;
