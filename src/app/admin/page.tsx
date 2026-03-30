@@ -459,6 +459,7 @@ export default function AdminPanel() {
                           <option value={25}>25km</option>
                           <option value={50}>50km</option>
                           <option value={100}>100km</option>
+                         <option value={150}>150km</option>
                           <option value={200}>200km</option>
                         </select>
                       </div>
